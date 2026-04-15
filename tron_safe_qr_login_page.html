@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TRON 安全扫码登录</title>
+  <script src="https://cdn.jsdelivr.net/npm/qrcode/build/qrcode.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tronweb/dist/TronWeb.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #0f1220;
+      color: #ffffff;
+    }
+    .wrap {
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: 1.1fr 0.9fr;
+      gap: 20px;
+    }
+    .card {
+      background: #171b2e;
+      border: 1px solid #2b3153;
+      border-radius: 18px;
+      padding: 20px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+    }
+    h1, h2 {
+      margin-top: 0;
+    }
+    .muted {
+      color: #a7afcf;
+      line-height: 1.6;
+    }
+    label {
+      display: block;
+      margin: 14px 0 8px;
+      font-size: 14px;
+      color: #c7ceea;
+    }
+    input {
+      width: 100%;
+      padding: 12px 14px;
+      border-radius: 12px;
+      border: 1px solid #39406a;
+      background: #0f1220;
+      color: #fff;
+      outline: none;
+    }
+    .row {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 16px;
+    }
+    button, a.btn {
+      border: 0;
+      border-radius: 12px;
+      padding: 12px 16px;
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 44px;
+      font-size: 14px;
+    }
+    .primary { background: #1f6fff; color: #fff; }
+    .secondary { background: #263055; color: #fff; }
+    .success { background: #149b5f; color: #fff; }
+    .warn { background: #ffb020; color: #111; }
+    .panel {
+      background: #0f1220;
+      border: 1px solid #2b3153;
+      border-radius: 14px;
+      padding: 14px;
+      margin-top: 12px;
+      word-break: break-all;
+    }
+    #qrcode {
+      min-height: 280px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #fff;
+      border-radius: 16px;
+      padding: 16px;
+      margin-top: 12px;
+    }
+    .small {
+      font-size: 12px;
+      color: #9ba6d3;
+    }
+    .ok { color: #43d693; }
+    .err { color: #ff7b7b; }
+    @media (max-width: 860px) {
+      .grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="grid">
+      <div class="card">
+        <h1>TRON 安全扫码登录</h1>
+        <p class="muted">这是一套安全版页面：扫码进入网页、连接 TronLink、签名登录、把登录事件记录到测试网合约。它不会申请 approve，也不会转走资产。</p>
+
+        <label>你的合约地址</label>
+        <input id="contractAddress" value="TUWWbc87A4gHBqK3o2wcZwGa6nSuHK55rc" />
+
+        <label>网页链接（生成二维码用）</label>
+        <input id="pageUrl" value="https://your-domain.com/tron-login.html" />
+
+        <label>登录备注 memo</label>
+        <input id="memo" value="login" />
+
+        <div class="row">
+          <button class="primary" onclick="generateQr()">生成扫码二维码</button>
+          <button class="secondary" onclick="connectWallet()">连接 TronLink</button>
+          <button class="success" onclick="signLogin()">签名登录</button>
+          <button class="warn" onclick="recordOnChain()">上链记录</button>
+        </div>
+
+        <div class="panel">状态：<span id="status">等待操作</span></div>
+        <div class="panel">钱包地址：<span id="address">未连接</span></div>
+        <div class="panel">Nonce：<span id="nonce">未生成</span></div>
+        <div class="panel">签名：<span id="signature">未签名</span></div>
+        <div class="panel">交易ID：<span id="txid">暂无</span></div>
+
+        <p class="small">注意：你当前合约在 <b>Nile Testnet</b>，手机里的 TronLink 也必须切到 <b>Nile Testnet</b> 才能调用成功。</p>
+      </div>
+
+      <div class="card">
+        <h2>扫码入口</h2>
+        <p class="muted">先把网页部署到你的域名，再把域名填进左边“网页链接”，然后生成二维码给别人扫码。</p>
+        <div id="qrcode"></div>
+        <div class="panel">
+          当前二维码链接：
+          <div id="qrText" class="small">https://your-domain.com/tron-login.html</div>
+        </div>
+        <div class="row">
+          <a class="btn secondary" id="openLink" href="https://your-domain.com/tron-login.html" target="_blank" rel="noopener noreferrer">打开当前链接</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let currentAddress = "";
+    let currentNonce = "";
+    let currentSignature = "";
+
+    function setStatus(text, isError = false) {
+      const el = document.getElementById('status');
+      el.textContent = text;
+      el.className = isError ? 'err' : 'ok';
+    }
+
+    function randomNonce(length = 16) {
+      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+      let out = '';
+      for (let i = 0; i < length; i++) {
+        out += chars[Math.floor(Math.random() * chars.length)];
+      }
+      return out + '_' + Date.now();
+    }
+
+    function stringToHex(str) {
+      return '0x' + Array.from(str)
+        .map(c => c.charCodeAt(0).toString(16).padStart(2, '0'))
+        .join('');
+    }
+
+    function generateQr() {
+      const url = document.getElementById('pageUrl').value.trim();
+      const box = document.getElementById('qrcode');
+      const text = document.getElementById('qrText');
+      const openLink = document.getElementById('openLink');
+      box.innerHTML = '';
+      if (!url) {
+        setStatus('请先填写网页链接', true);
+        return;
+      }
+      QRCode.toCanvas(url, { width: 260, margin: 2 }, function (err, canvas) {
+        if (err) {
+          setStatus('二维码生成失败', true);
+          return;
+        }
+        box.appendChild(canvas);
+        text.textContent = url;
+        openLink.href = url;
+        setStatus('二维码已生成');
+      });
+    }
+
+    async function connectWallet() {
+      try {
+        if (!window.tronLink && !window.tronWeb) {
+          setStatus('未检测到 TronLink，请在 TronLink 浏览器或安装插件后打开', true);
+          return;
+        }
+        if (window.tronLink && window.tronLink.request) {
+          await window.tronLink.request({ method: 'tron_requestAccounts' });
+        }
+        const tronWeb = window.tronWeb || (window.tronLink && window.tronLink.tronWeb);
+        if (!tronWeb || !tronWeb.defaultAddress || !tronWeb.defaultAddress.base58) {
+          setStatus('钱包未解锁或未连接', true);
+          return;
+        }
+        currentAddress = tronWeb.defaultAddress.base58;
+        document.getElementById('address').textContent = currentAddress;
+        setStatus('钱包已连接');
+      } catch (e) {
+        setStatus('连接失败：' + (e.message || e), true);
+      }
+    }
+
+    async function signLogin() {
+      try {
+        const tronWeb = window.tronWeb || (window.tronLink && window.tronLink.tronWeb);
+        if (!tronWeb) {
+          setStatus('请先连接钱包', true);
+          return;
+        }
+        if (!currentAddress) {
+          await connectWallet();
+        }
+        currentNonce = randomNonce();
+        document.getElementById('nonce').textContent = currentNonce;
+        const message = `TRON Login\nAddress: ${currentAddress}\nNonce: ${currentNonce}`;
+        const hexMessage = stringToHex(message);
+        currentSignature = await tronWeb.trx.signMessageV2(hexMessage);
+        document.getElementById('signature').textContent = currentSignature;
+        setStatus('签名成功');
+      } catch (e) {
+        setStatus('签名失败：' + (e.message || e), true);
+      }
+    }
+
+    async function recordOnChain() {
+      try {
+        const tronWeb = window.tronWeb || (window.tronLink && window.tronLink.tronWeb);
+        if (!tronWeb) {
+          setStatus('请先连接钱包', true);
+          return;
+        }
+        if (!currentNonce) {
+          setStatus('请先签名登录', true);
+          return;
+        }
+        const contractAddress = document.getElementById('contractAddress').value.trim();
+        const memo = document.getElementById('memo').value.trim() || 'login';
+        if (!contractAddress) {
+          setStatus('请填写合约地址', true);
+          return;
+        }
+        const contract = await tronWeb.contract().at(contractAddress);
+        const txid = await contract.login(currentNonce, memo).send({ feeLimit: 100000000 });
+        document.getElementById('txid').textContent = txid;
+        setStatus('上链记录成功');
+      } catch (e) {
+        setStatus('上链失败：' + (e.message || e), true);
+      }
+    }
+
+    generateQr();
+  </script>
+</body>
+</html>
